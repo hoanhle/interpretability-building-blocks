@@ -541,20 +541,27 @@ def gradient_ascent(config, model, input_tensor, layer_ids_to_use, iteration):
     # Step 0: Feed forward pass
     out = model(input_tensor)
 
-    # Step 1: Grab activations/feature maps of interest
-    activations = [out[layer_id_to_use] for layer_id_to_use in layer_ids_to_use]
+    # Step 1: Compute loss: either full‐layer MSE or single‐channel mean
+    if config.get('channel_to_use', None) is not None:
+        # single‐channel mode: require exactly one layer in layer_ids
+        assert len(layer_ids_to_use) == 1, "For channel mode, layer_ids_to_use must have length 1."
+        layer_act = out[layer_ids_to_use[0]]            # (1, C, H, W)
+        ch = config['channel_to_use']
+        C = layer_act.shape[1]
+        
+        if iteration == 0:
+            logging.info(f"channel_to_use={ch} out of range [0, {C}) for layer {layer_ids_to_use[0]}.")
+            
+        assert 0 <= ch < C, f"channel_to_use={ch} out of range [0, {C}) for layer {layer_ids_to_use[0]}."
+        chan_act = layer_act[:, ch:ch+1, :, :]      # (1, 1, H, W)
+        loss = nn.MSELoss(reduction='mean')(chan_act, torch.zeros_like(chan_act))
+                        # maximize channel mean
+    else:
+        # original full‐layer MSE on all requested layers
+        acts = [out[i] for i in layer_ids_to_use]
+        losses = [nn.MSELoss(reduction='mean')(a, torch.zeros_like(a)) for a in acts]
+        loss = torch.mean(torch.stack(losses))
 
-    # Step 2: Calculate loss over activations
-    losses = []
-    for layer_activation in activations:
-        # Use torch.norm(torch.flatten(layer_activation), p) with p=2 for L2 loss and p=1 for L1 loss. 
-        # But I'll use the MSE as it works really good, I didn't notice any serious change when going to L1/L2.
-        # using torch.zeros_like as if we wanted to make activations as small as possible but we'll do gradient ascent
-        # and that will cause it to actually amplify whatever the network "sees" thus yielding the famous DeepDream look
-        loss_component = torch.nn.MSELoss(reduction='mean')(layer_activation, torch.zeros_like(layer_activation))
-        losses.append(loss_component)
-
-    loss = torch.mean(torch.stack(losses))
     loss.backward()
 
     # Step 3: Process image gradients (smoothing + normalization, more an art then a science)

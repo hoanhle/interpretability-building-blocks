@@ -35,6 +35,7 @@ class VGG16Layers(Enum):
 class State(ParamContainer):
     img_width: Param = IntParam('Image Width', 224, 1, 1000)
     layers_to_use: Param = EnumParam('Layers to Use', VGG16Layers.relu4_3, VGG16Layers)
+    channel_to_use: Param = IntParam('Channel to Use', -1, -1, 32)
     model_name: Param = EnumParam('Model Name', SupportedModels.VGG16_EXPERIMENTAL.name, [m.name for m in SupportedModels])
     pretrained_weights: Param = EnumParam('Pretrained Weights', SupportedPretrainedWeights.IMAGENET.name, [pw.name for pw in SupportedPretrainedWeights])
     pyramid_size: Param = IntParam('Pyramid Size', 1, 1, 10)
@@ -65,9 +66,11 @@ if __name__ == '__main__':
 
         def state_to_config(self, state: State):
             config = dict()
-            config['input'] = 'cat-dog.jpeg'
+            config['input'] = 'n01443537_goldfish.JPEG'
             config['img_width'] = state.img_width
             config['layers_to_use'] = [state.layers_to_use.value]
+            if state.channel_to_use != -1:
+                config['channel_to_use'] = state.channel_to_use
             config['model_name'] = state.model_name
             config['pretrained_weights'] = state.pretrained_weights
             config['pyramid_size'] = state.pyramid_size
