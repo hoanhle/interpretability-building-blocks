@@ -21,7 +21,8 @@ import argparse
 import numbers
 import math
 from pathlib import Path
-
+from tqdm import tqdm
+from utils.torch_utils import get_device
 
 # Deep learning related imports
 import torch
@@ -61,7 +62,7 @@ OUT_IMAGES_PATH = DATA_DIR_PATH / 'out-images'
 BINARIES_PATH.mkdir(parents=True, exist_ok=True)
 OUT_IMAGES_PATH.mkdir(parents=True, exist_ok=True)
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # checking whether you have a GPU
+DEVICE = get_device()
 
 # Images will be normalized using these, because the CNNs were trained with normalized images as well!
 IMAGENET_MEAN_1 = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -84,7 +85,13 @@ class Vgg16Experimental(torch.nn.Module):
         vgg_pretrained_features = vgg16.features
 
         # I've exposed the best/most interesting layers in my subjective opinion (mp5 is not that good though)
-        self.layer_names = ['relu1_1', 'relu1_2', 'relu2_1', 'relu2_2', 'relu3_1', 'relu3_2', 'relu3_3', 'relu4_1', 'relu4_2', 'relu4_3', 'relu5_1', 'relu5_2', 'relu5_3', 'mp5']
+        self.layer_names = ['conv1_1', 'relu1_1', 'conv1_2', 'relu1_2', 
+                            'conv2_1', 'relu2_1', 'conv2_2', 'relu2_2', 
+                            'conv3_1', 'relu3_1', 'conv3_2', 'relu3_2',
+                            'conv3_3', 'relu3_3', 'conv4_1', 'relu4_1', 
+                            'conv4_2', 'relu4_2', 'conv4_3', 'relu4_3', 
+                            'conv5_1', 'relu5_1', 'conv5_2', 'relu5_2', 
+                            'conv5_3', 'relu5_3']
 
         # 31 layers in total for the VGG16
         self.conv1_1 = vgg_pretrained_features[0]
@@ -187,7 +194,7 @@ class Vgg16Experimental(torch.nn.Module):
 
         # Finally, expose only the layers that you want to experiment with here
         vgg_outputs = namedtuple("VggOutputs", self.layer_names)
-        out = vgg_outputs(relu3_3, relu4_1, relu4_2, relu4_3, relu5_1, relu5_2, relu5_3, mp5)
+        out = vgg_outputs(conv1_1, relu1_1, conv1_2, relu1_2, conv2_1, relu2_1, conv2_2, relu2_2, conv3_1, relu3_1, conv3_2, relu3_2, conv3_3, relu3_3, conv4_1, relu4_1, conv4_2, relu4_2, conv4_3, relu4_3, conv5_1, relu5_1, conv5_2, relu5_2, conv5_3, relu5_3)
 
         return out
     
@@ -407,16 +414,6 @@ def save_and_maybe_display_image(config, dump_img, name_modifier=None):
     return dump_path
 
 
-input_img_name = 'figures.jpg'  # checked in, I'll be using it as the running example
-img_width = 500  # arbitrary
-img_path = INPUT_DATA_PATH / input_img_name
-img = load_image(img_path, target_shape=img_width)
-
-fig = plt.figure(figsize=(7.5,5), dpi=100)
-plt.imshow(img)
-plt.show()
-
-
 def pre_process_numpy_img(img):
     assert isinstance(img, np.ndarray), f'Expected numpy image got {type(img)}'
 
@@ -597,22 +594,22 @@ def deep_dream_static_image(config, img=None):
     if img is None:  # load either the provided image or start from a pure noise image
         img_path = os.path.join(INPUT_DATA_PATH, config['input'])
         # load a numpy, [0, 1] range, channel-last, RGB image
-        img = load_image(img_path, target_shape=config['img_width'])
+        input_img = load_image(img_path, target_shape=config['img_width'])
         if config['use_noise']:
-            shape = img.shape
-            img = np.random.uniform(low=0.0, high=1.0, size=shape).astype(np.float32)
+            shape = input_img.shape
+            input_img = np.random.uniform(low=0.0, high=1.0, size=shape).astype(np.float32)
 
-    img = pre_process_numpy_img(img)
+    img = pre_process_numpy_img(input_img)
     original_shape = img.shape[:-1]  # save initial height and width
 
     # Note: simply rescaling the whole result (and not only details, see original implementation) gave me better results
     # Going from smaller to bigger resolution (from pyramid top to bottom)
-    for pyramid_level in range(config['pyramid_size']):
+    for pyramid_level in tqdm(range(config['pyramid_size']), desc='Pyramid Level'):
         new_shape = get_new_shape(config, original_shape, pyramid_level)
         img = cv.resize(img, (new_shape[1], new_shape[0]))  # resize depending on the current pyramid level
         input_tensor = pytorch_input_adapter(img)  # convert to trainable tensor
 
-        for iteration in range(config['num_gradient_ascent_iterations']):
+        for iteration in tqdm(range(config['num_gradient_ascent_iterations']), desc='Gradient Ascent Iteration'):
             
             # Introduce some randomness, it will give us more diverse results especially when you're making videos
             h_shift, w_shift = np.random.randint(-config['spatial_shift_size'], config['spatial_shift_size'] + 1, 2)
@@ -626,44 +623,6 @@ def deep_dream_static_image(config, img=None):
 
         img = pytorch_output_adapter(input_tensor)
 
-    return post_process_numpy_img(img)
+    return input_img, post_process_numpy_img(img)
 
 
-# Only a small subset is exposed by design to avoid cluttering
-parser = argparse.ArgumentParser()
-
-# Common params
-parser.add_argument("--input", type=str, help="Input IMAGE or VIDEO name that will be used for dreaming", default='figures.jpg')
-parser.add_argument("--img_width", type=int, help="Resize input image to this width", default=224)
-parser.add_argument("--layers_to_use", type=str, nargs='+', help="Layer whose activations we should maximize while dreaming", default=['relu4_3'])
-parser.add_argument("--model_name", choices=[m.name for m in SupportedModels],
-                    help="Neural network (model) to use for dreaming", default=SupportedModels.VGG16_EXPERIMENTAL.name)
-parser.add_argument("--pretrained_weights", choices=[pw.name for pw in SupportedPretrainedWeights],
-                    help="Pretrained weights to use for the above model", default=SupportedPretrainedWeights.IMAGENET.name)
-
-# Main params for experimentation (especially pyramid_size and pyramid_ratio)
-parser.add_argument("--pyramid_size", type=int, help="Number of images in an image pyramid", default=1)
-parser.add_argument("--pyramid_ratio", type=float, help="Ratio of image sizes in the pyramid", default=1.8)
-parser.add_argument("--num_gradient_ascent_iterations", type=int, help="Number of gradient ascent iterations", default=10)
-parser.add_argument("--lr", type=float, help="Learning rate i.e. step size in gradient ascent", default=0.09)
-
-# You usually won't need to change these as often
-parser.add_argument("--should_display", type=bool, help="Display intermediate dreaming results", default=False)
-parser.add_argument("--spatial_shift_size", type=int, help='Number of pixels to randomly shift image before grad ascent', default=32)
-parser.add_argument("--smoothing_coefficient", type=float, help='Directly controls standard deviation for gradient smoothing', default=0.5)
-parser.add_argument("--use_noise", type=bool, help="Use noise as a starting point instead of input image", default=False)
-args = parser.parse_args('')  # important to put '' in Jupyter otherwise it will complain
-
-# Wrapping configuration into a dictionary
-config = dict()
-for arg in vars(args):
-    config[arg] = getattr(args, arg)
-config['dump_dir'] = os.path.join(OUT_IMAGES_PATH, f'{config["model_name"]}_{config["pretrained_weights"]}')
-config['input'] = os.path.basename(config['input'])  # handle absolute and relative paths
-
-img = deep_dream_static_image(config)  # yep a single liner
-
-
-config['should_display'] = True
-dump_path = save_and_maybe_display_image(config, img)
-print(f'Saved DeepDream static image to: {os.path.relpath(dump_path)}\n')
