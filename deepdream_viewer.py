@@ -8,6 +8,7 @@ from examples.deepdream import deep_dream_static_image, save_and_maybe_display_i
 from enum import Enum
 from copy import deepcopy
 import cv2 as cv
+from PIL import Image
 
 class VGG16Layers(Enum):
     conv1_1 = 'conv1_1'
@@ -31,8 +32,13 @@ class VGG16Layers(Enum):
     relu5_3 = 'relu5_3'
     mp5 = 'mp5'
 
+class InputImage(Enum):
+    DOG_CAT = 'cat-dog.jpeg'
+    FISH = 'n01443537_goldfish.JPEG'
+
 @strict_dataclass
 class State(ParamContainer):
+    input_image: Param = EnumParam('Input Image', InputImage.DOG_CAT, InputImage)
     img_width: Param = IntParam('Image Width', 224, 1, 1000)
     layers_to_use: Param = EnumParam('Layers to Use', VGG16Layers.relu4_3, VGG16Layers)
     channel_to_use: Param = IntParam('Channel to Use', -1, -1, 32)
@@ -55,48 +61,64 @@ if __name__ == '__main__':
             self.state.seed = 0
             self.state_last = None
             self.cache = {}
+            self.export_img = False
 
         def compute(self):
             if self.state_last != self.state:
                 self.state_last = deepcopy(self.state)
             key = str(self.state)
             if key not in self.cache:
-                self.cache[key] = self.process(self.state)
+                self.cache[key] = self.process()
+            
+            if self.export_img:
+                self.export_image(self.cache[key])
+                self.export_img = False
+
             return self.cache[key]
 
-        def state_to_config(self, state: State):
+        def state_to_config(self):
             config = dict()
-            config['input'] = 'n01443537_goldfish.JPEG'
-            config['img_width'] = state.img_width
-            config['layers_to_use'] = [state.layers_to_use.value]
-            if state.channel_to_use != -1:
-                config['channel_to_use'] = state.channel_to_use
-            config['model_name'] = state.model_name
-            config['pretrained_weights'] = state.pretrained_weights
-            config['pyramid_size'] = state.pyramid_size
-            config['pyramid_ratio'] = state.pyramid_ratio
-            config['num_gradient_ascent_iterations'] = state.num_gradient_ascent_iterations
-            config['lr'] = state.lr
+            config['input'] = self.state.input_image.value
+            config['img_width'] = self.state.img_width
+            config['layers_to_use'] = [self.state.layers_to_use.value]
+            if self.state.channel_to_use != -1:
+                config['channel_to_use'] = self.state.channel_to_use
+            config['model_name'] = self.state.model_name
+            config['pretrained_weights'] = self.state.pretrained_weights
+            config['pyramid_size'] = self.state.pyramid_size
+            config['pyramid_ratio'] = self.state.pyramid_ratio
+            config['num_gradient_ascent_iterations'] = self.state.num_gradient_ascent_iterations
+            config['lr'] = self.state.lr
             config['should_display'] = False
-            config['spatial_shift_size'] = state.spatial_shift_size
-            config['smoothing_coefficient'] = state.smoothing_coefficient
-            config['use_noise'] = state.use_noise
-            config['seed'] = state.seed
+            config['spatial_shift_size'] = self.state.spatial_shift_size
+            config['smoothing_coefficient'] = self.state.smoothing_coefficient
+            config['use_noise'] = self.state.use_noise
+            config['seed'] = self.state.seed
             config['dump_dir'] = os.path.join(OUT_IMAGES_PATH, f'{config["model_name"]}_{config["pretrained_weights"]}')
             return config
 
-        def process(self, state: State):
-            config = self.state_to_config(state)
+        def process(self):
+            config = self.state_to_config()
+            print("Before", self.state.pyramid_ratio)
             input_img, output_img = deep_dream_static_image(config)
-
+            print("After", self.state.pyramid_ratio)
             img = np.concatenate((input_img, output_img), axis=1)
 
             return img
 
         @dockable
         def toolbar(self):
+            if self.export_img:
+                imgui.text('Exporting...')
+            elif imgui.button('Export image'):
+                self.export_img = True
+
             draw_container(self.state)
 
+        def export_image(self, img: np.ndarray):
+            img = Image.fromarray(np.uint8(img * 255))
+            print(self.state.pyramid_ratio)
+            img.save(os.path.join(OUT_IMAGES_PATH, f'{self.state.input_image.value}_{self.state.model_name}_{self.state.pretrained_weights}_{self.state.layers_to_use.value}_{self.state.channel_to_use}_{self.state.pyramid_size}_{self.state.pyramid_ratio}_{self.state.num_gradient_ascent_iterations}_{self.state.lr}_{self.state.spatial_shift_size}_{self.state.smoothing_coefficient}_{self.state.use_noise}_{self.state.seed}.png'))
 
     _ = Test('Deep Dream Viewer')
     print('Done')
