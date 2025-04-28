@@ -1,0 +1,24 @@
+name: interpretability-env
+channels:
+  - defaults
+  - pytorch
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cu121
+    - torch==2.5.1+cu121; sys_platform=="linux" and platform_machine != "aarch64"
+    - torchvision==0.20.1+cu121; sys_platform=="linux" and platform_machine != "aarch64"
+    - torch==2.5.1; sys_platform=="darwin" or platform_machine == "aarch64"
+    - torchvision==0.20.1; sys_platform=="darwin" or platform_machine == "aarch64"
+    - matplotlib
+    - numpy
+    - scipy
+    - opencv-python
+    - imageio
+    - jupyter
+    - tqdm
+    - -e ../pyviewer
+
+# conda env create -f environment.yml
+# conda env update -f environment.yml
