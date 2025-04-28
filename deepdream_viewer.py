@@ -1,7 +1,6 @@
 from pyviewer.docking_viewer import DockingViewer, dockable
 from imgui_bundle import imgui
 import numpy as np
-import argparse
 import os
 from pyviewer.params import *  # type: ignore
 from examples.deepdream import deep_dream_static_image, save_and_maybe_display_image, SupportedModels, SupportedPretrainedWeights, OUT_IMAGES_PATH, INPUT_DATA_PATH
@@ -9,6 +8,7 @@ from enum import Enum
 from copy import deepcopy
 import cv2 as cv
 from PIL import Image
+    
 
 class VGG16Layers(Enum):
     conv1_1 = 'conv1_1'
@@ -36,19 +36,20 @@ class InputImage(Enum):
     DOG_CAT = 'cat-dog.jpeg'
     FISH = 'n01443537_goldfish.JPEG'
 
+
 @strict_dataclass
 class State(ParamContainer):
     input_image: Param = EnumParam('Input Image', InputImage.DOG_CAT, InputImage)
     img_width: Param = IntParam('Image Width', 224, 1, 1000)
-    layers_to_use: Param = EnumParam('Layers to Use', VGG16Layers.relu4_3, VGG16Layers)
-    channel_to_use: Param = IntParam('Channel to Use', -1, -1, 32)
+    layers_to_use: Param = EnumParam('Layers to Use', VGG16Layers.relu1_1, VGG16Layers)
+    channel_to_use: Param = IntParam('Channel to Use', -1, -1, 32, buttons=True)
     model_name: Param = EnumParam('Model Name', SupportedModels.VGG16_EXPERIMENTAL.name, [m.name for m in SupportedModels])
     pretrained_weights: Param = EnumParam('Pretrained Weights', SupportedPretrainedWeights.IMAGENET.name, [pw.name for pw in SupportedPretrainedWeights])
     pyramid_size: Param = IntParam('Pyramid Size', 1, 1, 10)
     pyramid_ratio: Param = FloatParam('Pyramid Ratio', 1.8, 1.0, 2.0)
     num_gradient_ascent_iterations: Param = IntParam('Gradient Ascent Iterations', 10, 1, 100)
     lr: Param = FloatParam('Learning Rate', 0.09, 0.01, 1.0)
-    spatial_shift_size: Param = IntParam('Spatial Shift Size', 32, 0, 100)
+    spatial_shift_size: Param = IntParam('Spatial Shift Size', 0, 0, 100)
     smoothing_coefficient: Param = FloatParam('Smoothing Coefficient', 0.5, 0.0, 2.0)
     use_noise: Param = BoolParam('Use Noise', False)
     seed: Param = IntParam('Seed', 0, 0, 100)
@@ -62,6 +63,7 @@ if __name__ == '__main__':
             self.state_last = None
             self.cache = {}
             self.export_img = False
+            self.clear_cache = False
 
         def compute(self):
             if self.state_last != self.state:
@@ -96,11 +98,14 @@ if __name__ == '__main__':
             config['seed'] = self.state.seed
             config['dump_dir'] = os.path.join(OUT_IMAGES_PATH, f'{config["model_name"]}_{config["pretrained_weights"]}')
             return config
+    
+        def preview_callback(self, input_img, output_img):
+            self.update_image(np.concatenate((input_img, output_img), axis=1))
 
         def process(self):
             config = self.state_to_config()
             print("Before", self.state.pyramid_ratio)
-            input_img, output_img = deep_dream_static_image(config)
+            input_img, output_img = deep_dream_static_image(config, callback=self.preview_callback)
             print("After", self.state.pyramid_ratio)
             img = np.concatenate((input_img, output_img), axis=1)
 
@@ -112,13 +117,30 @@ if __name__ == '__main__':
                 imgui.text('Exporting...')
             elif imgui.button('Export image'):
                 self.export_img = True
+            
+            imgui.same_line()
+            if self.clear_cache:
+                imgui.text('Clearing cache...')
+                self.cache = {}
+                self.clear_cache = False
+            elif imgui.button('Clear cache'):
+                self.clear_cache = True
 
-            draw_container(self.state)
+
+            # draw_container(self.state)
+
+            for _, p in self.state:
+                if isinstance(p, Param) and p.active:
+                    imgui.set_next_item_width(self.ui_scale * 150)
+                    p.draw()
+    
 
         def export_image(self, img: np.ndarray):
             img = Image.fromarray(np.uint8(img * 255))
             print(self.state.pyramid_ratio)
             img.save(os.path.join(OUT_IMAGES_PATH, f'{self.state.input_image.value}_{self.state.model_name}_{self.state.pretrained_weights}_{self.state.layers_to_use.value}_{self.state.channel_to_use}_{self.state.pyramid_size}_{self.state.pyramid_ratio}_{self.state.num_gradient_ascent_iterations}_{self.state.lr}_{self.state.spatial_shift_size}_{self.state.smoothing_coefficient}_{self.state.use_noise}_{self.state.seed}.png'))
+
+
 
     _ = Test('Deep Dream Viewer')
     print('Done')

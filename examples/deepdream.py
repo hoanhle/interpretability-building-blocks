@@ -588,7 +588,7 @@ def gradient_ascent(config, model, input_tensor, layer_ids_to_use, iteration):
 
 
 
-def deep_dream_static_image(config, img=None):
+def deep_dream_static_image(config, img=None, callback=None):
     model = fetch_and_prepare_model(config['model_name'], config['pretrained_weights'])
 
     try:
@@ -604,7 +604,9 @@ def deep_dream_static_image(config, img=None):
         input_img = load_image(img_path, target_shape=config['img_width'])
         if config['use_noise']:
             shape = input_img.shape
-            input_img = np.random.uniform(low=0.0, high=1.0, size=shape).astype(np.float32)
+            input_img = np.ones(shape).astype(np.float32) * 0.5 + np.random.randn(*shape).astype(np.float32) * 0.05
+            input_img = np.clip(input_img, 0.0, 1.0)
+
 
     img = pre_process_numpy_img(input_img)
     original_shape = img.shape[:-1]  # save initial height and width
@@ -616,8 +618,11 @@ def deep_dream_static_image(config, img=None):
         img = cv.resize(img, (new_shape[1], new_shape[0]))  # resize depending on the current pyramid level
         input_tensor = pytorch_input_adapter(img)  # convert to trainable tensor
 
-        for iteration in tqdm(range(config['num_gradient_ascent_iterations']), desc='Gradient Ascent Iteration'):
-            
+        for iteration in tqdm(range(config['num_gradient_ascent_iterations']), desc='Gradient Ascent Iteration'): 
+            if callback is not None:
+                callback(input_img, post_process_numpy_img(pytorch_output_adapter(input_tensor)))
+                import time
+                time.sleep(0.05)
             # Introduce some randomness, it will give us more diverse results especially when you're making videos
             h_shift, w_shift = np.random.randint(-config['spatial_shift_size'], config['spatial_shift_size'] + 1, 2)
             input_tensor = random_circular_spatial_shift(input_tensor, h_shift, w_shift)
